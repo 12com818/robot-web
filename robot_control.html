@@ -64,7 +64,7 @@
   button.ghost:active { color: var(--bg); }
   button.stop {
     flex: none; margin-top: auto;               /* 贴右栏底部, 不撑满整列 */
-    height: clamp(84px, 20vh, 120px);
+    height: clamp(64px, 16vh, 100px);           /* 矮屏(手机横屏)减高防溢出 */
     color: var(--red); border-color: var(--red);
     font-size: 17px; letter-spacing: .5em; text-indent: .5em;
   }
@@ -128,7 +128,7 @@
   .leg-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--ink); border: none; }
   .leg-ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 2px; }
 
-  .bat-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .bat-panel { flex: none; display: flex; flex-direction: column; }  /* 按内容自适应, 不被压缩溢出 */
   .bat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-family: var(--mono); }
   .bat-head .lbl { font-size: 9px; letter-spacing: .28em; color: var(--ink-3); }
   .bat-v { font-size: 22px; font-weight: 500; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
@@ -136,13 +136,13 @@
   .bat-v.low { color: var(--red); }
   .bat-head .unit { font-size: 10px; color: var(--ink-3); }
   .bat-vbar {
-    position: relative; flex: 1; min-height: 56px; width: 26px; margin: 14px auto 8px;
+    position: relative; flex: none; height: 16px; width: 100%; margin: 10px 0 6px;
     border: 1px solid var(--line-strong); background: transparent;
   }
-  .bat-vbar i { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 0%; background: var(--ink); transition: height .3s; }
+  .bat-vbar i { position: absolute; left: 2px; top: 2px; bottom: 2px; width: 0%; background: var(--ink); transition: width .3s; }
   .bat-vbar.warn i { background: var(--ink-2); }
   .bat-vbar.low i { background: var(--red); }
-  .bat-seg { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent 0 10px, var(--bg) 10px 12px); pointer-events: none; }
+  .bat-seg { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 10px, var(--bg) 10px 12px); pointer-events: none; }
   .bat-range { font-family: var(--mono); font-size: 9px; color: var(--ink-3); text-align: center; letter-spacing: .14em; }
 
   /* ===== 底部单行状态条 ===== */
@@ -380,7 +380,7 @@ function updateBattery(v) {
   const bar = document.getElementById("batBar");
   el.textContent = v.toFixed(2);
   const pct = Math.max(0, Math.min(1, (v - BAT_MIN) / (BAT_MAX - BAT_MIN)));
-  document.getElementById("batFill").style.height = (pct * 100).toFixed(0) + "%";
+  document.getElementById("batFill").style.width = (pct * 100).toFixed(0) + "%";
   const cls = v < BAT_LOW ? "low" : (v < BAT_WARN ? "warn" : "");
   el.className = "bat-v " + cls;
   bar.className = "bat-vbar " + cls;
