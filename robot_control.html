@@ -192,7 +192,7 @@
     <div class="panel joy-panel">
       <div class="joy-read">
         <div><span>VEL</span><b id="vVal">0.0</b></div>
-        <div><span>LEG</span><b id="wVal">60°</b></div>
+        <div><span>TURN</span><b id="wVal">0.0</b></div>
       </div>
       <canvas id="joystick"></canvas>
     </div>
@@ -262,7 +262,7 @@ const SVC_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const RX_UUID  = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // 网页→车 写
 const TX_UUID  = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // 车→网页 通知
 
-const VEL_MAX = 10;                      // 与固件 VEL_TARGET_MAX 一致
+const VEL_MAX = 10, TURN_MAX = 3;        // 与固件 VEL_TARGET_MAX / TURN_TARGET_MAX 一致
 const LEG_MIN = 30, LEG_MAX = 60;        // 腿高范围(°): 30=最高, 60=最矮
 
 // 电量条显示区间: 2S 锂电 (固件 10k/4.7k 分压, ADC 量程上限约 10.3V, 与此吻合)
@@ -440,7 +440,7 @@ function drawJoy() {
 
 function updateJoyDisplay() {
   document.getElementById('vVal').textContent = (jy * VEL_MAX).toFixed(1);
-  document.getElementById('wVal').textContent = curLeg + '°';
+  document.getElementById('wVal').textContent = (jx * TURN_MAX).toFixed(1);
 }
 
 function updateJoy(clientX, clientY) {
@@ -465,9 +465,9 @@ joyCanvas.addEventListener('pointermove', e => { if (dragging) updateJoy(e.clien
 }));
 
 // ===== 发送 =====
-// 新固件协议: 纯数字=目标速度(rad/s), "LEG_ANG:45"=腿高指令
+// 摇杆指令格式与固件一致: "J:v,w" (v=前进rad/s, w=转向rad/s, 正=右转); 腿高另发 "LEG_ANG:45"
 function joyCmd() {
-  return (jy * VEL_MAX).toFixed(1);
+  return 'J:' + (jy * VEL_MAX).toFixed(1) + ',' + (jx * TURN_MAX).toFixed(1);
 }
 
 async function sendJoy(force) {
