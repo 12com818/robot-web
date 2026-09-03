@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>轮足机器人 · 图传遥控</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #0e0e0e;
+    --line: #232323;
+    --line-strong: #3d3d3d;
+    --ink: #f2f2f2;
+    --ink-2: #9a9a9a;
+    --ink-3: #5a5a5a;
+    --red: #e5484d;                 /* 全页唯一的颜色: 停止 / 低压 */
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    padding: 10px max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+  }
+
+  /* ===== 三分栏栅格 ===== */
+  .app {
+    height: 100%;
+    display: grid;
+    grid-template-columns: min(28vw, 220px) 1fr min(26vw, 190px);
+    grid-template-rows: auto 1fr auto;
+    gap: 10px;
+  }
+  .col { display: flex; flex-direction: column; gap: 10px; overflow: hidden; min-height: 0; }
+
+  /* 面板: 发丝线框 + 极轻抬底, 无圆角无阴影 */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 12px; }
+
+  /* ===== 顶栏 ===== */
+  .header {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    border-bottom: 1px solid var(--line); padding: 0 2px 10px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .brand .mark { color: var(--ink); font-size: 14px; line-height: 1; }
+  .brand h1 { font-size: 13px; font-weight: 500; letter-spacing: .16em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .link { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 11px; color: var(--ink-2); letter-spacing: .08em; flex-shrink: 0; }
+  /* 未连接 = 空心圆点, 已连接 = 实心白点 (单色语义) */
+  .led { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--ink-2); background: transparent; transition: .2s; flex-shrink: 0; }
+  .led.on { background: var(--ink); border-color: var(--ink); }
+
+  /* ===== 按钮: 发丝线框, 按下反白 ===== */
+  button {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    color: var(--ink); background: transparent;
+    border: 1px solid var(--line-strong); border-radius: 2px;
+    padding: 7px 14px; cursor: pointer; transition: background .12s, color .12s; flex-shrink: 0;
+  }
+  button:active { background: var(--ink); color: var(--bg); }
+  button.ghost { color: var(--ink-2); border-color: var(--line); }
+  button.ghost:active { color: var(--bg); }
+  button.stop {
+    flex: none; margin-top: auto;               /* 贴右栏底部, 不撑满整列 */
+    height: clamp(84px, 20vh, 120px);
+    color: var(--red); border-color: var(--red);
+    font-size: 17px; letter-spacing: .5em; text-indent: .5em;
+  }
+  button.stop:active { background: var(--red); color: #fff; }
+
+  /* ===== 左栏: 摇杆 ===== */
+  .joy-panel {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  .joy-read { display: flex; gap: 28px; font-family: var(--mono); }
+  .joy-read div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .joy-read span { color: var(--ink-3); font-size: 9px; letter-spacing: .24em; }
+  .joy-read b { color: var(--ink); font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #joystick {
+    width: clamp(150px, 26vh, 220px); max-width: 100%; height: auto; aspect-ratio: 1 / 1;
+    display: block; touch-action: none; cursor: pointer;
+  }
+
+  /* ===== 中栏: 图传 ===== */
+  .cam-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+  .cam-bar { display: flex; gap: 8px; flex-shrink: 0; }
+  .cam-bar input {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 11px; color: var(--ink);
+    background: transparent; border: 1px solid var(--line); border-radius: 2px;
+    padding: 7px 9px; outline: none;
+  }
+  .cam-bar input:focus { border-color: var(--line-strong); }
+  .cam-bar input::placeholder { color: var(--ink-3); }
+  .cam-view { position: relative; flex: 1; min-height: 0; background: #000; overflow: hidden; border: 1px solid var(--line); }
+  /* 垫层在 iframe 之下: iframe 加载不出来时可见, 不会是白框 */
+  .novideo {
+    position: absolute; inset: 0; z-index: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    color: var(--ink-3); font-size: 11px; letter-spacing: .06em; text-align: center; padding: 0 14px;
+  }
+  .novideo .big { font-family: var(--mono); font-size: 12px; letter-spacing: .32em; text-indent: .32em; color: var(--ink-2); }
+  .novideo code { font-family: var(--mono); font-size: 9px; color: var(--ink-3); word-break: break-all; }
+  #camFrame { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; background: transparent; }
+
+  /* ===== 右栏: 腿高 + 竖直电量计 + 停止 ===== */
+  .leg-panel { flex-shrink: 0; }
+  .leg-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-family: var(--mono); margin-bottom: 8px; }
+  .leg-head .lbl { font-size: 9px; letter-spacing: .28em; color: var(--ink-3); }
+  .leg-head .val { font-size: 18px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .leg-head .unit { font-size: 10px; color: var(--ink-3); }
+  .leg-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 20px; background: transparent; cursor: pointer;
+  }
+  .leg-slider::-webkit-slider-runnable-track {
+    height: 2px; background: var(--line-strong); border-radius: 1px;
+  }
+  .leg-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--ink); border: none; margin-top: -6px;
+  }
+  .leg-slider::-moz-range-track { height: 2px; background: var(--line-strong); border-radius: 1px; border: none; }
+  .leg-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--ink); border: none; }
+  .leg-ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 2px; }
+
+  .bat-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .bat-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-family: var(--mono); }
+  .bat-head .lbl { font-size: 9px; letter-spacing: .28em; color: var(--ink-3); }
+  .bat-v { font-size: 22px; font-weight: 500; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+  .bat-v.warn { color: var(--ink-2); }
+  .bat-v.low { color: var(--red); }
+  .bat-head .unit { font-size: 10px; color: var(--ink-3); }
+  .bat-vbar {
+    position: relative; flex: 1; min-height: 56px; width: 26px; margin: 14px auto 8px;
+    border: 1px solid var(--line-strong); background: transparent;
+  }
+  .bat-vbar i { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 0%; background: var(--ink); transition: height .3s; }
+  .bat-vbar.warn i { background: var(--ink-2); }
+  .bat-vbar.low i { background: var(--red); }
+  .bat-seg { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent 0 10px, var(--bg) 10px 12px); pointer-events: none; }
+  .bat-range { font-family: var(--mono); font-size: 9px; color: var(--ink-3); text-align: center; letter-spacing: .14em; }
+
+  /* ===== 底部单行状态条 ===== */
+  .statusbar {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em;
+    border-top: 1px solid var(--line); padding: 9px 2px 0;
+  }
+  #statusLine { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+  #statusLine.err { color: var(--red); }
+  .sb-cam { flex-shrink: 0; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+
+  /* ===== 竖屏保护 ===== */
+  .rotate-hint { display: none; }
+  @media (orientation: portrait) {
+    .rotate-hint {
+      display: flex; position: fixed; inset: 0; z-index: 99;
+      flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+      background: var(--bg); text-align: center; padding: 0 28px;
+    }
+    .rotate-hint .icon { font-size: 38px; color: var(--ink-2); animation: rot 2.6s ease-in-out infinite; }
+    .rotate-hint p { font-family: var(--mono); font-size: 14px; letter-spacing: .42em; text-indent: .42em; color: var(--ink); }
+    .rotate-hint small { font-size: 11px; color: var(--ink-3); line-height: 1.8; max-width: 100%; }
+  }
+  @keyframes rot { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-90deg); } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 顶栏 -->
+  <div class="header">
+    <div class="brand">
+      <span class="mark">▍</span>
+      <h1>轮足机器人 · 图传遥控</h1>
+    </div>
+    <div class="link">
+      <span class="led" id="dot"></span>
+      <span id="statusText">未连接</span>
+      <button id="connectBtn">连接</button>
+    </div>
+  </div>
+
+  <!-- 左栏: 摇杆 -->
+  <div class="col">
+    <div class="panel joy-panel">
+      <div class="joy-read">
+        <div><span>VEL</span><b id="vVal">0.0</b></div>
+        <div><span>LEG</span><b id="wVal">60°</b></div>
+      </div>
+      <canvas id="joystick"></canvas>
+    </div>
+  </div>
+
+  <!-- 中栏: 图传画面 -->
+  <div class="col">
+    <div class="panel cam-panel">
+      <div class="cam-bar">
+        <input type="url" id="camUrl" inputmode="url" autocapitalize="off" autocorrect="off"
+               spellcheck="false" placeholder="http://192.168.4.1/">
+        <button id="camLoadBtn">载入</button>
+        <button id="camOpenBtn" class="ghost">新窗口</button>
+      </div>
+      <div class="cam-view">
+        <div class="novideo">
+          <div class="big">NO SIGNAL</div>
+          <div>图传未连接 · 正在等待画面</div>
+          <code id="camUrlEcho"></code>
+        </div>
+        <iframe id="camFrame" title="摄像头图传"
+                allow="autoplay; fullscreen; encrypted-media"
+                referrerpolicy="no-referrer"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右栏: 腿高 + 电池 + 停止 -->
+  <div class="col">
+    <div class="panel leg-panel">
+      <div class="leg-head">
+        <span class="lbl">LEG</span>
+        <span><span class="val" id="legVal">60</span> <span class="unit">°</span></span>
+      </div>
+      <input type="range" class="leg-slider" id="legSlider" min="30" max="60" step="1" value="60">
+      <div class="leg-ticks"><span>30 高</span><span>60 矮</span></div>
+    </div>
+    <div class="panel bat-panel">
+      <div class="bat-head">
+        <span class="lbl">BAT</span>
+        <span><span class="bat-v" id="tBat">--.--</span> <span class="unit">V</span></span>
+      </div>
+      <div class="bat-vbar" id="batBar"><i id="batFill"></i><span class="bat-seg"></span></div>
+      <div class="bat-range" id="batRange"></div>
+    </div>
+    <button class="stop" id="stopBtn">停止</button>
+  </div>
+
+  <!-- 底部单行状态条 -->
+  <div class="statusbar">
+    <span id="statusLine">初始化…</span>
+    <span class="sb-cam" id="sbCam"></span>
+  </div>
+</div>
+
+<!-- 竖屏遮罩 -->
+<div class="rotate-hint">
+  <div class="icon">⟳</div>
+  <p>请横屏使用</p>
+  <small>横屏后：左摇杆 · 中图传 · 右电池与停止</small>
+</div>
+
+<script>
+// ===== 常量 =====
+// Nordic UART Service, 与固件 UUID 保持一致
+const SVC_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const RX_UUID  = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // 网页→车 写
+const TX_UUID  = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // 车→网页 通知
+
+const VEL_MAX = 10;                      // 与固件 VEL_TARGET_MAX 一致
+const LEG_MIN = 30, LEG_MAX = 60;        // 腿高范围(°): 30=最高, 60=最矮
+
+// 电量条显示区间: 2S 锂电 (固件 10k/4.7k 分压, ADC 量程上限约 10.3V, 与此吻合)
+// 仅影响电量条与低压变色, 不影响任何控制逻辑; 换电池组时改这两个数即可
+const BAT_MIN = 6.0, BAT_MAX = 8.4;
+const BAT_WARN = 7.0, BAT_LOW = 6.6;
+
+// 图传地址: 默认占位页(实测可被 iframe 嵌入), 用户改过的值存 localStorage
+const DEFAULT_CAM_URL = "https://embed.windy.com/embed/map.html";
+const CAM_URL_KEY = "wlrobot.camUrl";
+
+let device = null, rxChar = null, txChar = null;
+const encoder = new TextEncoder();
+let lastSent = 0, lastLegSent = 0;
+let noConnHinted = false;
+let curLeg = 60;                         // 当前腿高角度
+
+// ===== 单行状态条 =====
+function log(msg, isErr) {
+  const el = document.getElementById("statusLine");
+  el.textContent = msg;
+  el.classList.toggle("err", !!isErr);
+  console.log("[robot]", msg);
+}
+
+// ===== 图传面板 =====
+const camUrlInput = document.getElementById("camUrl");
+const camFrame    = document.getElementById("camFrame");
+const camUrlEcho  = document.getElementById("camUrlEcho");
+const sbCam       = document.getElementById("sbCam");
+
+function loadCam(url, save) {
+  url = (url || "").trim();
+  if (!url) { log("图传地址为空, 未载入", true); return; }
+  camUrlInput.value  = url;
+  camUrlEcho.textContent = url;
+  camFrame.src = url;
+  try { sbCam.textContent = "CAM " + new URL(url).host; } catch (e) { sbCam.textContent = "CAM " + url; }
+  if (save) { try { localStorage.setItem(CAM_URL_KEY, url); } catch (e) {} }
+  log("图传地址已更新: " + url);
+}
+
+document.getElementById("camLoadBtn").addEventListener("click", () => loadCam(camUrlInput.value, true));
+camUrlInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); loadCam(camUrlInput.value, true); camUrlInput.blur(); }
+});
+document.getElementById("camOpenBtn").addEventListener("click", () => {
+  const u = (camUrlInput.value || "").trim();
+  if (u) window.open(u, "_blank");
+});
+
+// ===== 蓝牙连接 =====
+function setStatus(connected) {
+  document.getElementById("dot").classList.toggle("on", connected);
+  document.getElementById("statusText").textContent = connected ? "已连接" : "未连接";
+  document.getElementById("connectBtn").textContent = connected ? "断开" : "连接";
+}
+
+async function toggleConnect() {
+  if (device && device.gatt.connected) { device.gatt.disconnect(); return; }
+  await connect();
+}
+
+async function connect() {
+  if (!navigator.bluetooth) { log("浏览器不支持 Web Bluetooth, 请用 Chrome/Edge", true); return; }
+  try {
+    log("正在搜索设备…");
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: "WL-Robot" }],
+      optionalServices: [SVC_UUID]
+    });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    log("正在连接 GATT…");
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(SVC_UUID);
+    rxChar = await service.getCharacteristic(RX_UUID);
+    txChar = await service.getCharacteristic(TX_UUID);
+
+    await txChar.startNotifications();
+    txChar.addEventListener("characteristicvaluechanged", onTelemetry);
+
+    setStatus(true);
+    noConnHinted = false;
+    log("已连接 " + device.name);
+    sendJoy(true);              // 连接后先发一次零值, 保证起始安全
+  } catch (e) {
+    log("连接失败: " + e.message, true);
+  }
+}
+
+function onDisconnected() {
+  setStatus(false);
+  rxChar = null;
+  noConnHinted = false;
+  log("连接已断开", true);
+}
+
+// 收到遥测(11字段): "targetAngle,pitch,targetVel,wheelVel,vbat,wheelVelL,wheelVelR,balanceOffset,MSE,ITAE,Peak"
+// 兼容旧8字段; 文本消息(GS:.../TUNE:...)直接进状态条
+function onTelemetry(ev) {
+  const txt = new TextDecoder().decode(ev.target.value);
+  if (txt.startsWith("GS:") || txt.startsWith("TUNE:")) { log("车端: " + txt.trim()); return; }
+  const p = txt.split(",").map(parseFloat);
+  if (p.length >= 5 && !p.slice(0, 5).some(isNaN)) {
+    updateBattery(p[4]);
+  } else {
+    if (txt.trim().length) log("车端: " + txt.trim());
+  }
+}
+
+// ===== 电池 =====
+function updateBattery(v) {
+  const el = document.getElementById("tBat");
+  const bar = document.getElementById("batBar");
+  el.textContent = v.toFixed(2);
+  const pct = Math.max(0, Math.min(1, (v - BAT_MIN) / (BAT_MAX - BAT_MIN)));
+  document.getElementById("batFill").style.height = (pct * 100).toFixed(0) + "%";
+  const cls = v < BAT_LOW ? "low" : (v < BAT_WARN ? "warn" : "");
+  el.className = "bat-v " + cls;
+  bar.className = "bat-vbar " + cls;
+}
+
+// ===== 摇杆 =====
+const joyCanvas = document.getElementById("joystick");
+const joyCtx = joyCanvas.getContext("2d");
+const LOGICAL = 260;                       // 绘制逻辑坐标系, 与 joystick_control.html 一致
+let jx = 0, jy = 0, dragging = false;      // 归一化摇杆坐标, y向上为正
+
+// 按 devicePixelRatio 放大位图, 绘制代码仍以 260×260 逻辑坐标工作
+function sizeJoy() {
+  const dpr = window.devicePixelRatio || 1;
+  joyCanvas.width  = LOGICAL * dpr;
+  joyCanvas.height = LOGICAL * dpr;
+  joyCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawJoy();
+}
+
+// 黑白胶片: 发丝线圆环 + 四个基准刻度 + 向量线 + 空心/实心摇杆头
+function drawJoy() {
+  const C = 130, R = 118, KR = 26;
+  const ctx = joyCtx;
+  ctx.clearRect(0, 0, LOGICAL, LOGICAL);
+
+  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(C, C, R, 0, 2 * Math.PI); ctx.stroke();
+
+  ctx.strokeStyle = '#5f5f5f';
+  [[0, -1], [0, 1], [-1, 0], [1, 0]].forEach(([dx, dy]) => {
+    ctx.beginPath();
+    ctx.moveTo(C + dx * (R - 9), C + dy * (R - 9));
+    ctx.lineTo(C + dx * R, C + dy * R);
+    ctx.stroke();
+  });
+
+  ctx.strokeStyle = '#262626';
+  ctx.beginPath(); ctx.arc(C, C, R * 0.55, 0, 2 * Math.PI); ctx.stroke();
+
+  const kx = C + jx * (R - KR), ky = C - jy * (R - KR);
+  if (Math.hypot(jx, jy) > 0.03) {
+    ctx.strokeStyle = dragging ? '#9a9a9a' : '#5f5f5f';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(C, C); ctx.lineTo(kx, ky); ctx.stroke();
+  }
+
+  // 摇杆头: 静止 = 空心白环, 拖动中 = 实心白
+  ctx.fillStyle = dragging ? '#f2f2f2' : '#0a0a0a';
+  ctx.beginPath(); ctx.arc(kx, ky, KR, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(kx, ky, KR, 0, 2 * Math.PI); ctx.stroke();
+
+  ctx.fillStyle = '#5f5f5f';
+  ctx.beginPath(); ctx.arc(C, C, 1.5, 0, 2 * Math.PI); ctx.fill();
+}
+
+function updateJoyDisplay() {
+  document.getElementById('vVal').textContent = (jy * VEL_MAX).toFixed(1);
+  document.getElementById('wVal').textContent = curLeg + '°';
+}
+
+function updateJoy(clientX, clientY) {
+  const r = joyCanvas.getBoundingClientRect();
+  let x = (clientX - r.left - r.width / 2) / (r.width / 2);
+  let y = -(clientY - r.top - r.height / 2) / (r.height / 2);
+  const m = Math.hypot(x, y);
+  if (m > 1) { x /= m; y /= m; }
+  jx = x; jy = y;
+  drawJoy(); updateJoyDisplay(); sendJoy(false);
+}
+
+joyCanvas.addEventListener('pointerdown', e => {
+  dragging = true; joyCanvas.setPointerCapture(e.pointerId);
+  updateJoy(e.clientX, e.clientY);
+});
+joyCanvas.addEventListener('pointermove', e => { if (dragging) updateJoy(e.clientX, e.clientY); });
+['pointerup', 'pointercancel'].forEach(ev => joyCanvas.addEventListener(ev, () => {
+  if (!dragging) return;
+  dragging = false; jx = jy = 0;
+  drawJoy(); updateJoyDisplay(); sendJoy(true);   // 松手回中, 强制立即发零
+}));
+
+// ===== 发送 =====
+// 新固件协议: 纯数字=目标速度(rad/s), "LEG_ANG:45"=腿高指令
+function joyCmd() {
+  return (jy * VEL_MAX).toFixed(1);
+}
+
+async function sendJoy(force) {
+  if (!rxChar) {
+    if (!noConnHinted && (dragging || force)) {
+      noConnHinted = true;
+      log("尚未连接蓝牙, 摇杆指令未发送", true);
+    }
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - lastSent < 66) return;   // 节流 ~15Hz
+  lastSent = now;
+  try {
+    const data = encoder.encode(joyCmd());
+    if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+    else await rxChar.writeValue(data);
+  } catch (e) { log('发送失败: ' + e.message, true); }
+}
+
+function stopNow() {
+  jx = jy = 0; dragging = false;
+  drawJoy(); updateJoyDisplay(); sendJoy(true);
+}
+
+// ===== 键盘辅助 (桌面调试): ↑↓=前后, ←→=转向, 空格=停止 =====
+const keys = new Set();
+document.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
+    e.preventDefault();
+    if (k === ' ') { keys.clear(); }
+    else keys.add(k);
+    applyKeys();
+  }
+});
+document.addEventListener('keyup', e => { keys.delete(e.key.toLowerCase()); applyKeys(); });
+function applyKeys() {
+  jx = (keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0);
+  jy = (keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0);
+  drawJoy(); updateJoyDisplay(); sendJoy(true);
+}
+
+// 页面隐藏时立即发零 (真正兜底靠车端心跳超时)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { jx = jy = 0; sendJoy(true); }
+});
+
+// ===== 腿高控制 =====
+const legSlider = document.getElementById('legSlider');
+legSlider.addEventListener('input', function() {
+  curLeg = parseInt(this.value);
+  document.getElementById('legVal').textContent = curLeg;
+  updateJoyDisplay();
+  // 节流 ~10Hz, 防刷爆BLE
+  const now = Date.now();
+  if (now - lastLegSent > 100) { lastLegSent = now; sendCmd('LEG_ANG:' + curLeg); }
+});
+legSlider.addEventListener('change', function() {
+  curLeg = parseInt(this.value);
+  sendCmd('LEG_ANG:' + curLeg);   // 松手时确保最终值发出
+});
+
+async function sendCmd(cmd) {
+  if (!rxChar) return;
+  try {
+    const data = encoder.encode(cmd);
+    if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+    else await rxChar.writeValue(data);
+  } catch (e) { log('发送失败: ' + e.message, true); }
+}
+
+// ===== 事件绑定与初始化 =====
+document.getElementById('connectBtn').addEventListener('click', toggleConnect);
+document.getElementById('stopBtn').addEventListener('click', stopNow);
+window.addEventListener('resize', sizeJoy);
+window.addEventListener('orientationchange', () => setTimeout(sizeJoy, 200));
+
+document.getElementById('batRange').textContent = BAT_MIN.toFixed(1) + " – " + BAT_MAX.toFixed(1) + " V";
+
+sizeJoy();
+updateJoyDisplay();
+
+let savedCamUrl = null;
+try { savedCamUrl = localStorage.getItem(CAM_URL_KEY); } catch (e) {}
+loadCam(savedCamUrl || DEFAULT_CAM_URL, false);
+
+log(navigator.bluetooth ? "就绪 · 点击「连接」选择 WL-Robot"
+                        : "浏览器不支持 Web Bluetooth, 请用 Chrome/Edge",
+    !navigator.bluetooth);
+</script>
+</body>
+</html>
