@@ -95,6 +95,29 @@
   }
   .cam-bar input:focus { border-color: var(--line-strong); }
   .cam-bar input::placeholder { color: var(--ink-3); }
+  /* 地址框只作显示: 点击弹出顶部浮层编辑, 避免手机横屏被键盘遮住 */
+  .cam-bar input[readonly] { cursor: pointer; }
+
+  /* ===== 地址输入浮层: 贴 visualViewport 顶边, 键盘只会从底部升起 ===== */
+  .url-sheet {
+    position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 120;
+    display: flex; flex-direction: column;
+    background: rgba(0, 0, 0, .72);
+    padding: 8px max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left));
+  }
+  .url-sheet[hidden] { display: none; }
+  .sheet-panel { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 2px; padding: 10px; }
+  .sheet-row { display: flex; gap: 8px; }
+  .sheet-row input {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 16px;      /* ≥16px: 防 iOS 聚焦时自动放大 */
+    color: var(--ink); background: transparent;
+    border: 1px solid var(--line); border-radius: 2px;
+    padding: 8px 9px; outline: none;
+  }
+  .sheet-row input:focus { border-color: var(--line-strong); }
+  .sheet-row input::placeholder { color: var(--ink-3); }
+  .sheet-hint { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: var(--ink-3); margin-top: 8px; }
   .cam-view { position: relative; flex: 1; min-height: 0; background: #000; overflow: hidden; border: 1px solid var(--line); }
   /* 垫层在 iframe 之下: iframe 加载不出来时可见, 不会是白框 */
   .novideo {
@@ -248,6 +271,19 @@
   </div>
 </div>
 
+<!-- 图传地址输入浮层: 始终吸附在可视区顶部, 键盘不会遮挡 -->
+<div class="url-sheet" id="urlSheet" hidden>
+  <div class="sheet-panel">
+    <div class="sheet-row">
+      <input type="url" id="sheetUrl" inputmode="url" autocapitalize="off" autocorrect="off"
+             spellcheck="false" placeholder="http://192.168.4.1/">
+      <button id="sheetOkBtn">载入</button>
+      <button id="sheetCancelBtn" class="ghost">取消</button>
+    </div>
+    <div class="sheet-hint">图传地址 · 回车载入 · Esc 或点空白处取消</div>
+  </div>
+</div>
+
 <!-- 竖屏遮罩 -->
 <div class="rotate-hint">
   <div class="icon">⟳</div>
@@ -306,13 +342,64 @@ function loadCam(url, save) {
 }
 
 document.getElementById("camLoadBtn").addEventListener("click", () => loadCam(camUrlInput.value, true));
-camUrlInput.addEventListener("keydown", e => {
-  if (e.key === "Enter") { e.preventDefault(); loadCam(camUrlInput.value, true); camUrlInput.blur(); }
-});
 document.getElementById("camOpenBtn").addEventListener("click", () => {
   const u = (camUrlInput.value || "").trim();
   if (u) window.open(u, "_blank");
 });
+
+// ===== 地址输入浮层 =====
+// 手机横屏时软键盘会吃掉屏幕下半部分, 内联输入框正好落在被遮区域。
+// 编辑一律走这个浮层: 用 visualViewport 的可视矩形定位, 输入框贴可视区顶边, 键盘只会从底部升起。
+const urlSheet  = document.getElementById("urlSheet");
+const sheetUrl  = document.getElementById("sheetUrl");
+
+function syncSheetViewport() {
+  if (urlSheet.hidden) return;
+  const vv = window.visualViewport;
+  if (!vv) return;                       // 无 visualViewport 时退化为全屏 fixed, 输入框同样在顶部
+  urlSheet.style.left   = vv.offsetLeft + "px";
+  urlSheet.style.top    = vv.offsetTop + "px";
+  urlSheet.style.width  = vv.width + "px";
+  urlSheet.style.height = vv.height + "px";
+}
+
+function openUrlSheet() {
+  if (!urlSheet.hidden) return;
+  sheetUrl.value = camUrlInput.value;
+  urlSheet.hidden = false;
+  syncSheetViewport();
+  sheetUrl.focus();                      // 同步聚焦, 保住用户手势, iOS 才会弹键盘
+  sheetUrl.select();
+}
+
+function closeUrlSheet() {
+  sheetUrl.blur();                        // 先收键盘, 再隐藏浮层
+  urlSheet.hidden = true;
+}
+
+// 地址框改为只读显示, 点它即开浮层
+camUrlInput.readOnly = true;
+camUrlInput.addEventListener("click", openUrlSheet);
+camUrlInput.addEventListener("focus", openUrlSheet);
+
+document.getElementById("sheetOkBtn").addEventListener("click", () => {
+  const u = (sheetUrl.value || "").trim();
+  if (!u) { log("图传地址为空, 未载入", true); return; }
+  closeUrlSheet();
+  loadCam(u, true);
+});
+document.getElementById("sheetCancelBtn").addEventListener("click", closeUrlSheet);
+urlSheet.addEventListener("pointerdown", e => { if (e.target === urlSheet) closeUrlSheet(); });
+sheetUrl.addEventListener("keydown", e => {
+  if (e.key === "Enter")  { e.preventDefault(); document.getElementById("sheetOkBtn").click(); }
+  if (e.key === "Escape") { e.preventDefault(); closeUrlSheet(); }
+});
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", syncSheetViewport);
+  window.visualViewport.addEventListener("scroll", syncSheetViewport);
+}
+window.addEventListener("orientationchange", () => setTimeout(syncSheetViewport, 200));
 
 // ===== 蓝牙连接 =====
 function setStatus(connected) {
@@ -495,7 +582,13 @@ function stopNow() {
 
 // ===== 键盘辅助 (桌面调试): ↑↓=前后, ←→=转向, 空格=停止 =====
 const keys = new Set();
+// 在输入框里打字时不抢按键: 否则输入地址的方向键/空格会被当成行车指令
+function typingInField(e) {
+  const t = e.target;
+  return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+}
 document.addEventListener('keydown', e => {
+  if (typingInField(e)) return;
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
     e.preventDefault();
@@ -504,7 +597,11 @@ document.addEventListener('keydown', e => {
     applyKeys();
   }
 });
-document.addEventListener('keyup', e => { keys.delete(e.key.toLowerCase()); applyKeys(); });
+document.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (typingInField(e) || !keys.has(k)) return;   // 只理按下过的方向键: 回车等按键不该重发指令、刷掉状态条
+  keys.delete(k); applyKeys();
+});
 function applyKeys() {
   jx = (keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0);
   jy = (keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0);
