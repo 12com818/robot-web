@@ -99,7 +99,7 @@
     cursor: pointer; touch-action: none; user-select: none; flex-shrink: 0;
     transition: background .12s, color .12s;
   }
-  .mic-btn.rec { background: var(--ink); color: var(--bg); }   /* 按住 = 实心反白 */
+  .mic-btn.rec { background: var(--ink); color: var(--bg); }   /* 开启 = 实心反白 */
   .mic-btn:disabled { opacity: .35; cursor: not-allowed; }
   .voice-echo { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: center; min-height: 16px; max-width: 100%; line-height: 1.5; }
   .voice-echo .src { color: var(--ink-3); }
@@ -211,7 +211,7 @@
     <div class="panel voice-panel">
       <div class="voice-state" id="voiceState">待命</div>
       <button class="mic-btn" id="micBtn">MIC</button>
-      <div class="voice-echo" id="voiceEcho">按住麦克风说话</div>
+      <div class="voice-echo" id="voiceEcho">点击开始 · 再次点击停止</div>
       <button class="ghost" id="keyBtn">KEY</button>
       <div class="key-row" id="keyRow">
         <input type="password" id="keyInput" placeholder="DeepSeek API Key">
@@ -485,7 +485,7 @@ function applyKeys() {
 
 // 页面隐藏时立即发零 (真正兜底靠车端心跳超时)
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { jx = jy = 0; clearVoiceTarget(); sendJoy(true); }
+  if (document.hidden) { jx = jy = 0; clearVoiceTarget(); closeMic(); sendJoy(true); }
 });
 
 // ===== 腿高控制 =====
@@ -590,7 +590,7 @@ const micBtn = document.getElementById('micBtn');
 const voiceState = document.getElementById('voiceState');
 const voiceEcho = document.getElementById('voiceEcho');
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, recognizing = false;
+let rec = null, recognizing = false, micActive = false;
 
 function setVoiceState(txt, isErr){
   voiceState.textContent = txt;
@@ -606,20 +606,29 @@ if (!SR) {
   setVoiceState('不支持语音');
   voiceEcho.textContent = '当前浏览器不支持 SpeechRecognition';
 } else {
-  micBtn.addEventListener('pointerdown', startVoice);
-  ['pointerup','pointercancel','pointerleave'].forEach(ev => micBtn.addEventListener(ev, stopVoice));
+  micBtn.addEventListener('click', toggleVoice);
 }
 
-function startVoice(e){
-  if (!SR || recognizing) return;
-  e.preventDefault();
-  if (micBtn.setPointerCapture) { try { micBtn.setPointerCapture(e.pointerId); } catch(_){} }
+// 按一下开启 / 再按一下关闭
+function toggleVoice(){
+  if (micActive){ closeMic(); setVoiceState('已停止'); }
+  else { micActive = true; micBtn.classList.add('rec'); startVoice(); }
+}
+// 关闭麦克风(手动关闭 / 致命错误 / 页面隐藏 共用)
+function closeMic(){
+  micActive = false;
+  stopVoice();
+  micBtn.classList.remove('rec');
+}
+
+function startVoice(){
+  if (!SR || !micActive || recognizing) return;
   rec = new SR();
   rec.lang = 'zh-CN';
   rec.interimResults = true;
-  rec.continuous = false;
+  rec.continuous = true;                 // 持续识别多句, 直到手动关闭
   rec.maxAlternatives = 1;
-  rec.onstart = () => { recognizing = true; micBtn.classList.add('rec'); setVoiceState('聆听中'); };
+  rec.onstart = () => { recognizing = true; setVoiceState('聆听中'); };
   rec.onresult = (ev) => {
     let interim = '', final = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++){
@@ -628,18 +637,25 @@ function startVoice(e){
     }
     if (interim){
       voiceEcho.textContent = '「' + interim + '」';
-      // interim 抢停: 命中停止词立即执行, 不等 final (抢延迟)
-      if (/停|站住|别动|别跑|stop/i.test(interim)){ applyIntent('stop'); setVoiceState('已停止'); }
+      // interim 抢停: 命中停止词立即执行, 不等 final (抢延迟); 麦克风仍开着继续听
+      if (/停|站住|别动|别跑|stop/i.test(interim)){ applyIntent('stop'); setVoiceState('聆听中'); }
     }
     if (final) handleFinal(final.trim());
   };
   rec.onerror = (ev) => {
-    const msg = { 'no-speech':'没听清, 再试一次', 'network':'识别网络故障',
-                  'not-allowed':'麦克风权限被拒', 'audio-capture':'无麦克风设备' }[ev.error]
+    const fatal = ['not-allowed','audio-capture','service-not-allowed'].includes(ev.error);
+    const msg = { 'no-speech':'没听清, 继续聆听', 'network':'识别网络故障, 重试中',
+                  'not-allowed':'麦克风权限被拒', 'audio-capture':'无麦克风设备',
+                  'service-not-allowed':'识别服务不可用' }[ev.error]
                 || ('识别错误: ' + ev.error);
     setVoiceState(msg, ev.error !== 'no-speech');
+    if (fatal) closeMic();               // 致命错误: 关闭, 不自动重启
   };
-  rec.onend = () => { recognizing = false; micBtn.classList.remove('rec'); };
+  rec.onend = () => {
+    recognizing = false;
+    // 仍开启 → 自动无缝重启续听 (Chrome 静音超时会结束会话); .rec 高亮保持不熄灭
+    if (micActive) setTimeout(() => { if (micActive && !recognizing) startVoice(); }, 250);
+  };
   try { rec.start(); } catch(_){ setVoiceState('识别启动失败', true); }
 }
 
