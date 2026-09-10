@@ -104,11 +104,15 @@
   .voice-echo { font-family: var(--mono); font-size: 11px; color: var(--ink-2); text-align: center; min-height: 16px; max-width: 100%; line-height: 1.5; }
   .voice-echo .src { color: var(--ink-3); }
   .key-row { display: none; gap: 6px; align-items: center; }
-  .key-row.open { display: flex; }
+  .key-row.open {
+    display: flex; position: fixed; z-index: 50;   /* 浮到可视区顶部, top/left 由 JS visualViewport 动态设定 */
+    padding: 8px 10px;
+    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 2px;
+  }
   .key-row input {
-    font-family: var(--mono); font-size: 11px; color: var(--ink);
+    font-family: var(--mono); font-size: 16px; color: var(--ink);   /* 16px 防移动端聚焦自动放大 */
     background: var(--bg); border: 1px solid var(--line-strong); border-radius: 2px;
-    padding: 5px 8px; width: 150px; min-width: 0;
+    padding: 6px 8px; width: min(56vw, 300px); min-width: 0;
   }
 
   /* ===== 右栏: 腿高 + 竖直电量计 + 停止 ===== */
@@ -463,6 +467,7 @@ function stopNow() {
 // ===== 键盘辅助 (桌面调试): ↑↓=前后, ←→=转向, 空格=停止 =====
 const keys = new Set();
 document.addEventListener('keydown', e => {
+  if (typingInField()) return;                 // 输入框聚焦时不控车, 防误触发
   const k = e.key.toLowerCase();
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
     e.preventDefault();
@@ -471,7 +476,7 @@ document.addEventListener('keydown', e => {
     applyKeys();
   }
 });
-document.addEventListener('keyup', e => { keys.delete(e.key.toLowerCase()); applyKeys(); });
+document.addEventListener('keyup', e => { if (typingInField()) return; keys.delete(e.key.toLowerCase()); applyKeys(); });
 function applyKeys() {
   jx = (keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0);
   jy = (keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0);
@@ -705,14 +710,52 @@ const keyRow = document.getElementById('keyRow');
 const keyInput = document.getElementById('keyInput');
 const keySave = document.getElementById('keySave');
 
+// 输入框聚焦判断: 聚焦时禁用全局键盘控车, 防误触发
+function typingInField(){
+  const el = document.activeElement;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
+
+// 把展开的 KEY 行吸附到可视区顶部居中(键盘升起时始终在键盘上方可见)
+function positionKeyRow(){
+  const vv = window.visualViewport;
+  const top = vv ? vv.offsetTop + 10 : 10;
+  const cx  = vv ? vv.offsetLeft + vv.width / 2 : window.innerWidth / 2;
+  keyRow.style.top = top + 'px';
+  keyRow.style.left = cx + 'px';
+  keyRow.style.transform = 'translateX(-50%)';
+}
+
+function openKeyRow(){
+  keyRow.classList.add('open');
+  keys.clear(); applyKeys();                   // 清键盘残留, 防方向键卡在前进
+  keyInput.value = localStorage.getItem(DS_KEY_STORAGE) || '';
+  positionKeyRow();
+  if (window.visualViewport){
+    window.visualViewport.addEventListener('resize', positionKeyRow);
+    window.visualViewport.addEventListener('scroll', positionKeyRow);
+  }
+  setTimeout(() => keyInput.focus(), 0);
+}
+
+function closeKeyRow(){
+  keyRow.classList.remove('open');
+  keyRow.style.top = '';
+  keyRow.style.left = '';
+  keyRow.style.transform = '';                 // 复位浮层定位, 回到面板内
+  if (window.visualViewport){
+    window.visualViewport.removeEventListener('resize', positionKeyRow);
+    window.visualViewport.removeEventListener('scroll', positionKeyRow);
+  }
+}
+
 keyBtn.addEventListener('click', () => {
-  keyRow.classList.toggle('open');
-  if (keyRow.classList.contains('open')) keyInput.value = localStorage.getItem(DS_KEY_STORAGE) || '';
+  if (keyRow.classList.contains('open')) closeKeyRow(); else openKeyRow();
 });
 keySave.addEventListener('click', () => {
   const k = keyInput.value.trim();
   if (k) localStorage.setItem(DS_KEY_STORAGE, k); else localStorage.removeItem(DS_KEY_STORAGE);
-  keyRow.classList.remove('open');
+  closeKeyRow();
   keyInput.value = '';
   setVoiceState(k ? 'KEY 已保存' : 'KEY 已清除');
 });
